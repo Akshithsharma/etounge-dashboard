@@ -3,6 +3,7 @@ import pandas as pd
 import time
 import json
 import os
+import random
 
 # --------------------------
 # App state defaults
@@ -23,44 +24,31 @@ if "serial_connected" not in st.session_state:
     st.session_state.serial_connected = False
 
 # --------------------------
-# Try import joblib (model loader)
+# Load ML model
 # --------------------------
 def try_load_model(path="herb_classifier.joblib"):
-    """Attempt to load a joblib model from the repo root (or uploaded file)."""
     try:
         import joblib
-    except Exception as e:
-        st.session_state.MODEL_AVAILABLE = False
-        st.session_state.model = None
-        st.error("❌ `joblib` is not installed in the environment. Add `joblib` to requirements.txt and redeploy.")
+    except Exception:
+        st.error("❌ joblib not installed. Add it to requirements.txt.")
         return
-
     if not os.path.exists(path):
-        st.session_state.MODEL_AVAILABLE = False
-        st.session_state.model = None
-        st.warning(f"⚠️ Model file not found at `{path}`. Please add `herb_classifier.joblib` to your repo (or upload below).")
+        st.warning(f"⚠️ Model file `{path}` not found.")
         return
-
     try:
         st.session_state.model = joblib.load(path)
         st.session_state.MODEL_AVAILABLE = True
-        # Get expected features from model if scikit-learn provides it
         try:
             st.session_state.expected_features = int(st.session_state.model.n_features_in_)
-        except Exception:
-            # fallback to 11 (previous assumption)
+        except:
             st.session_state.expected_features = 11
     except Exception as e:
-        st.session_state.MODEL_AVAILABLE = False
-        st.session_state.model = None
-        st.error(f"❌ Failed loading model: {e}")
+        st.error(f"❌ Failed to load model: {e}")
 
-# attempt to load model from default path at app start
 try_load_model()
 
 # --------------------------
-# Try import pyserial (only used locally)
-# Do NOT open ports automatically (avoid locking them)
+# Serial handling
 # --------------------------
 try:
     import serial
@@ -70,64 +58,57 @@ except Exception:
     st.session_state.serial_available = False
 
 def refresh_serial_ports():
-    """Refresh list of available serial ports (local machine only)."""
     ports = []
     if st.session_state.serial_available:
         try:
             ports_info = list_ports.comports()
             for p in ports_info:
-                # (device, description)
                 ports.append((p.device, p.description))
-        except Exception as e:
+        except Exception:
             ports = []
     st.session_state.serial_ports = ports
 
-# initial refresh
+def release_serial():
+    if "serial_obj" in st.session_state and st.session_state.serial_obj:
+        try:
+            st.session_state.serial_obj.close()
+            st.session_state.serial_connected = False
+        except:
+            pass
+
 refresh_serial_ports()
 
 # --------------------------
-# UI & Pages
+# UI setup
 # --------------------------
 st.set_page_config(page_title="E-Tongue Dashboard", layout="wide")
 st.sidebar.title("🔎 Navigation")
 page = st.sidebar.radio("Go to", ["Instructions", "Home", "Herb Classifier", "Dataset"])
 
-# Herb info dictionary (unchanged)
 HERB_INFO = {
-    "Tulsi": {
-        "Properties": "Rich in antioxidants, antimicrobial",
-        "Uses": "Helps with cold, cough, respiratory issues"
-    },
-    "Neem": {
-        "Properties": "Anti-bacterial, antifungal, blood purifier",
-        "Uses": "Treats skin diseases, dental issues, boosts immunity"
-    },
-    "Ashwagandha": {
-        "Properties": "Adaptogenic, stress reliever",
-        "Uses": "Reduces stress, boosts energy, improves sleep"
-    },
-    "Unknown": {
-        "Properties": "Not in dataset",
-        "Uses": "Needs further research"
-    }
+    "Tulsi": {"Properties": "Rich in antioxidants, antimicrobial", "Uses": "Helps with cold, cough, respiratory issues"},
+    "Neem": {"Properties": "Anti-bacterial, antifungal, blood purifier", "Uses": "Treats skin diseases, dental issues, boosts immunity"},
+    "Ashwagandha": {"Properties": "Adaptogenic, stress reliever", "Uses": "Reduces stress, boosts energy, improves sleep"},
+    "Unknown": {"Properties": "Not in dataset", "Uses": "Needs further research"}
 }
 
 # --------------------------
 # Instructions Page
 # --------------------------
 if page == "Instructions":
-    st.title("📖 Instructions")
+    st.title("📖 How to Use This Project")
     st.markdown("""
-    1. Connect your Arduino to the computer running this Streamlit app.  
-    2. Make sure the Arduino is sending JSON lines containing at least `LDR_Analog` and `pH`, e.g.:
+    ### Steps to Use:
+    1. **Connect Arduino** to your computer with the correct sensors attached.  
+    2. Ensure Arduino is programmed to send sensor data in JSON format like:  
        ```json
        {"LDR_Analog": 320, "LDR_Digital": 1, "pH": 6.8}
-       ```
-    3. Go to **Herb Classifier**, select the port and click **Connect**.  
-    4. Click **Start Herb Analysis** after successful connection.
+       ```  
+    3. Open the **Herb Classifier** page.  
+    4. Select **Arduino Mode** if you have the device connected.  
+    5. Select **Demo Mode** if you want to test without hardware.  
+    6. Click **Start Herb Analysis** to identify the herb.  
     """)
-    st.write("---")
-    st.info("Important: This app will **not** run in demo mode — real Arduino connection is required.")
 
 # --------------------------
 # Home Page
@@ -142,167 +123,159 @@ elif page == "Home":
         st.markdown("Captures **real-time data** using LDR and Soil pH sensors.")
     with col2:
         st.markdown("### 🤖 ML Powered")
-        st.markdown("Trained **machine learning model** identifies medicinal herbs.")
+        st.markdown("Machine learning model identifies medicinal herbs.")
     with col3:
         st.markdown("### 💊 Healthcare Impact")
-        st.markdown("Helps in **classifying herbs** and highlighting medicinal uses.")
-    st.write("---")
-    st.markdown("""
-    ### 📌 About the Project  
-    This project integrates **IoT sensors** with **ML** to classify medicinal herbs.  
-    """)
+        st.markdown("Helps in **classifying herbs** and highlighting uses.")
     st.write("---")
     if st.button("🚀 Start Herb Analysis"):
         st.session_state.page_redirect = "Herb Classifier"
+        st.experimental_rerun()
 
 # --------------------------
-# Herb Classifier Page (REQUIRES Arduino)
+# Herb Classifier Page
 # --------------------------
 elif page == "Herb Classifier" or st.session_state.get("page_redirect") == "Herb Classifier":
-    st.title("🌿 Herb Classifier — Arduino required")
-    st.write("This page runs **only** when an Arduino is connected and a model is available.")
+    st.title("🌿 Herb Classifier")
 
-    # Model status block
-    st.subheader("Model status")
-    if st.session_state.MODEL_AVAILABLE:
-        st.success(f"✅ Model loaded. Expected features: {st.session_state.expected_features}")
-    else:
-        st.error("❌ Model not available. Place `herb_classifier.joblib` in repo root or upload it below.")
-        uploaded = st.file_uploader("Upload herb_classifier.joblib (optional)", type=["joblib", "pkl"])
-        if uploaded is not None:
-            # save to working dir and try load
-            with open("herb_classifier.joblib", "wb") as f:
-                f.write(uploaded.getbuffer())
-            try_load_model("herb_classifier.joblib")
-            st.experimental_rerun()
-        # do not proceed if model missing
+    if not st.session_state.MODEL_AVAILABLE:
+        st.error("❌ Model not available. Place `herb_classifier.joblib` in folder.")
         st.stop()
 
-    # Serial (Arduino) status block
-    st.subheader("Arduino connection")
-    if not st.session_state.serial_available:
-        st.error("❌ `pyserial` / `serial` not available in this environment. Arduino connectivity will not work here.")
-        st.info("If you're running locally, install pyserial (`pip install pyserial`) and run Streamlit locally.")
-        st.stop()
+    mode = st.radio("Choose Mode:", ["Arduino Mode", "Demo Mode"])
 
-    # Show available ports & controls
-    cols = st.columns([2, 1, 1])
-    with cols[0]:
-        if st.button("🔄 Refresh ports"):
+    # Arduino Mode
+    if mode == "Arduino Mode":
+        if not st.session_state.serial_available:
+            st.error("❌ pyserial not available. Install it locally (`pip install pyserial`).")
+            st.stop()
+
+        st.subheader("Arduino Connection")
+        if st.button("🔄 Refresh Ports"):
             refresh_serial_ports()
-    with cols[1]:
-        if st.button("❌ Disconnect") and st.session_state.serial_connected:
-            try:
-                st.session_state.serial_obj.close()
-            except Exception:
-                pass
-            st.session_state.serial_obj = None
-            st.session_state.serial_connected = False
-            st.success("Disconnected.")
-    with cols[2]:
-        st.write("")  # spacer
 
-    # Show port selection
-    if len(st.session_state.serial_ports) == 0:
-        st.warning("No serial ports detected. Plug in the Arduino and click 'Refresh ports'.")
-        st.stop()
+        if len(st.session_state.serial_ports) == 0:
+            st.warning("No COM ports detected. Plug Arduino and refresh.")
+            st.stop()
 
-    port_options = [f"{dev} — {desc}" for dev, desc in st.session_state.serial_ports]
-    selected = st.selectbox("Select serial port", port_options)
-    selected_port = selected.split(" — ")[0]  # device like COM3 or /dev/ttyUSB0
+        port_options = [f"{dev} — {desc}" for dev, desc in st.session_state.serial_ports]
+        selected = st.selectbox("Select port", port_options)
+        selected_port = selected.split(" — ")[0]
+        baud = st.number_input("Baudrate", value=9600, step=1)
 
-    # Connect button
-    if not st.session_state.serial_connected:
-        if st.button("Connect to selected port"):
-            baud = st.number_input("Baudrate", value=9600, step=1)
-            try:
-                ser = serial.Serial(selected_port, int(baud), timeout=2)
-                time.sleep(2)  # allow Arduino to reset
-                st.session_state.serial_obj = ser
-                st.session_state.serial_connected = True
-                st.success(f"Connected to {selected_port} at {baud}.")
-            except Exception as e:
-                st.session_state.serial_obj = None
-                st.session_state.serial_connected = False
-                st.error(f"Failed to open port: {e}")
-                st.stop()
-    else:
-        st.success(f"✅ Connected to {st.session_state.serial_obj.port}")
-        if st.button("Reconnect (close & reopen)"):
-            try:
-                st.session_state.serial_obj.close()
-            except Exception:
-                pass
-            st.session_state.serial_connected = False
-            st.experimental_rerun()
-
-    # Now the Arduino is connected and model loaded -> proceed with analysis
-    if st.session_state.serial_connected and st.session_state.MODEL_AVAILABLE:
-        st.write("---")
-        st.subheader("Run analysis")
-        if st.button("Start Herb Analysis"):
-            with st.spinner("Reading from Arduino (waiting for a JSON line)..."):
+        if not st.session_state.serial_connected:
+            if st.button("🔗 Connect"):
                 try:
-                    ser = st.session_state.serial_obj
-                    raw_bytes = ser.readline()
-                    raw = raw_bytes.decode("utf-8", errors="ignore").strip()
-                    if raw == "":
-                        st.error("No data received from Arduino. Ensure the Arduino is sending JSON and try again.")
-                        st.stop()
-                    # Parse JSON
-                    try:
-                        data = json.loads(raw)
-                    except Exception as e:
-                        st.error(f"Failed to parse JSON from Arduino: {e}\nRaw: {raw}")
-                        st.stop()
-
-                    # Validate required keys
-                    if "LDR_Analog" not in data or "pH" not in data:
-                        st.error("Incoming data must contain at least 'LDR_Analog' and 'pH' fields.")
-                        st.write("Received keys:", list(data.keys()))
-                        st.stop()
-
-                    # Build feature vector and pad to expected length
-                    expected = st.session_state.expected_features or 11
-                    # Put your actual two values first, then pad zeros for the rest
-                    X = [[float(data["LDR_Analog"]), float(data["pH"])] + [0.0] * max(0, expected - 2)]
-
-                    # Predict
-                    try:
-                        pred = st.session_state.model.predict(X)[0]
-                    except Exception as e:
-                        st.error(f"Model prediction failed: {e}")
-                        st.stop()
-
-                    # Show results
-                    st.success(f"🌱 Identified Herb: **{pred}**")
-                    st.metric("LDR Analog", f"{data['LDR_Analog']}")
-                    st.metric("LDR Digital", f"{data.get('LDR_Digital', 'N/A')}")
-                    st.metric("Soil pH", f"{data['pH']}")
-
-                    info = HERB_INFO.get(pred, HERB_INFO["Unknown"])
-                    st.subheader("✨ Herb Properties")
-                    st.write(info["Properties"])
-                    st.subheader("💊 Medicinal Uses")
-                    st.write(info["Uses"])
-
-                    if float(data["pH"]) < 5.5 or float(data["pH"]) > 8.5:
-                        st.error("⚠️ Abnormal pH detected – sample may be invalid!")
-
+                    release_serial()
+                    ser = serial.Serial(selected_port, int(baud), timeout=2)
+                    time.sleep(2)
+                    st.session_state.serial_obj = ser
+                    st.session_state.serial_connected = True
+                    st.success(f"Connected to {selected_port}")
                 except Exception as e:
-                    st.error(f"Unexpected error while reading from serial: {e}")
+                    st.error(f"Failed to connect: {e}")
+        else:
+            st.success(f"✅ Connected to {st.session_state.serial_obj.port}")
+            if st.button("🔌 Disconnect"):
+                release_serial()
+                st.success("Disconnected.")
+
+        if st.session_state.serial_connected:
+            st.write("---")
+            if st.button("Start Herb Analysis"):
+                with st.spinner("Reading from Arduino..."):
+                    try:
+                        raw = st.session_state.serial_obj.readline().decode("utf-8", errors="ignore").strip()
+                        if raw == "":
+                            st.error("No data received. Check Arduino sketch.")
+                            st.stop()
+                        data = json.loads(raw)
+
+                        # Progress bar
+                        progress = st.progress(0)
+                        for i in range(100):
+                            time.sleep(0.02)
+                            progress.progress(i + 1)
+
+                        expected = st.session_state.expected_features or 11
+                        X = [[float(data["LDR_Analog"]), float(data["pH"])] + [0.0] * max(0, expected - 2)]
+                        pred = st.session_state.model.predict(X)[0]
+
+                        st.success(f"🌱 Identified Herb: **{pred}**")
+                        st.metric("LDR Analog", f"{data['LDR_Analog']}")
+                        st.metric("LDR Digital", f"{data.get('LDR_Digital', 'N/A')}")
+                        st.metric("Soil pH", f"{data['pH']}")
+
+                        info = HERB_INFO.get(pred, HERB_INFO["Unknown"])
+                        st.subheader("✨ Properties")
+                        st.write(info["Properties"])
+                        st.subheader("💊 Medicinal Uses")
+                        st.write(info["Uses"])
+
+                        if float(data["pH"]) < 5.5 or float(data["pH"]) > 8.5:
+                            st.error("⚠️ Abnormal pH detected.")
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
+    # Demo Mode
+    elif mode == "Demo Mode":
+        st.info("ℹ️ Running in demo mode with random data (no Arduino required).")
+        if st.button("Run Demo Analysis"):
+            with st.spinner("Generating demo data..."):
+                progress = st.progress(0)
+                for i in range(100):
+                    time.sleep(0.02)
+                    progress.progress(i + 1)
+
+                data = {
+                    "LDR_Analog": round(random.uniform(200, 800), 2),
+                    "LDR_Digital": random.choice([0, 1]),
+                    "pH": round(random.uniform(5.5, 8.5), 2)
+                }
+
+                expected = st.session_state.expected_features or 11
+                X = [[data["LDR_Analog"], data["pH"]] + [0.0] * max(0, expected - 2)]
+                pred = st.session_state.model.predict(X)[0]
+
+                st.success(f"🌱 Identified Herb: **{pred}**")
+                st.metric("LDR Analog", f"{data['LDR_Analog']}")
+                st.metric("LDR Digital", f"{data['LDR_Digital']}")
+                st.metric("Soil pH", f"{data['pH']}")
+
+                info = HERB_INFO.get(pred, HERB_INFO["Unknown"])
+                st.subheader("✨ Properties")
+                st.write(info["Properties"])
+                st.subheader("💊 Medicinal Uses")
+                st.write(info["Uses"])
+
+                if data["pH"] < 5.5 or data["pH"] > 8.5:
+                    st.error("⚠️ Abnormal pH detected.")
 
     st.session_state.page_redirect = None
 
 # --------------------------
 # Dataset Page
 # --------------------------
+# --------------------------
+# Dataset Page
+# --------------------------
 elif page == "Dataset":
     st.title("📊 Dataset Collected")
-    st.info("This table shows example dataset.")
-    dataset = pd.DataFrame([
-        {"LDR_Analog": 320, "pH": 6.8, "Herb": "Tulsi"},
-        {"LDR_Analog": 550, "pH": 7.2, "Herb": "Neem"},
-        {"LDR_Analog": 430, "pH": 6.5, "Herb": "Ashwagandha"}
-    ])
-    st.dataframe(dataset)
+
+    dataset_path = "e_tongue_high_sep_dataset.csv"
+
+    if os.path.exists(dataset_path):
+        try:
+            dataset = pd.read_csv(dataset_path)
+            st.success(f"✅ Loaded dataset from `{dataset_path}`")
+            st.dataframe(dataset)
+        except Exception as e:
+            st.error(f"⚠️ Failed to load dataset: {e}")
+    else:
+        st.error(f"❌ Dataset file `{dataset_path}` not found in the project folder.")
+        st.info("Upload the file using the uploader below:")
+        uploaded = st.file_uploader("Upload CSV file", type=["csv"])
+        if uploaded is not None:
+            dataset = pd.read_csv(uploaded)
+            st.success("✅ Dataset uploaded successfully")
+            st.dataframe(dataset)
