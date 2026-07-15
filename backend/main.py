@@ -33,10 +33,6 @@ import google.generativeai as genai
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
-
-print("SUPABASE_URL =", SUPABASE_URL)
-print("SUPABASE_KEY_PREFIX =", SUPABASE_SERVICE_KEY[:20] if SUPABASE_SERVICE_KEY else "EMPTY")
-print("SUPABASE_KEY_LENGTH =", len(SUPABASE_SERVICE_KEY))
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 RAZORPAY_WEBHOOK_SECRET = os.environ.get("RAZORPAY_WEBHOOK_SECRET", "")
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "*")
