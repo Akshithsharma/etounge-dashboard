@@ -39,7 +39,11 @@ FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "*")
 
 supabase: Optional[Client] = None
 if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+    print(f"DEBUG: SUPABASE_URL='{SUPABASE_URL}' (len={len(SUPABASE_URL)})")
+    print(f"DEBUG: SUPABASE_SERVICE_KEY starts='{SUPABASE_SERVICE_KEY[:12]}...' ends='...{SUPABASE_SERVICE_KEY[-6:]}' (len={len(SUPABASE_SERVICE_KEY)})")
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+else:
+    print(f"DEBUG: Missing env vars. SUPABASE_URL set={bool(SUPABASE_URL)}, SUPABASE_SERVICE_KEY set={bool(SUPABASE_SERVICE_KEY)}")
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
